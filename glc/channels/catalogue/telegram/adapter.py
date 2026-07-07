@@ -48,10 +48,10 @@ class Adapter(ChannelAdapter):
 
         if sender is None:
             channel_user_id = str(message.chat.id)
-            user_handle = message.chat.username or channel_user_id
+            user_handle = message.chat.username or ""
         else:
             channel_user_id = str(sender.id)
-            user_handle = sender.username or channel_user_id
+            user_handle = sender.username or ""
 
         # Get handle/username
         if not user_handle:
@@ -152,6 +152,7 @@ class Adapter(ChannelAdapter):
             if reply.channel_user_id.isdigit()
             else reply.channel_user_id,
             "text": reply.text or "",
+            "parse_mode": "MarkdownV2",
         }
 
         if reply.thread_id:
