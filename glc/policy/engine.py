@@ -146,6 +146,7 @@ class PolicyEngine:
 # Module-level singleton, lazily constructed from config.policy_yaml_path().
 _engine: PolicyEngine | None = None
 _engine_lock = threading.Lock()
+_frozen = False
 
 
 def get_engine() -> PolicyEngine:
@@ -158,7 +159,15 @@ def get_engine() -> PolicyEngine:
     return _engine
 
 
-def reload_engine() -> None:
+def freeze_engine() -> None:
+    """B5 — after boot under harden, refuse reload/monkeypatch."""
+    global _frozen
+    _frozen = True
+
+
+def reload_engine(*, force: bool = False) -> None:
+    if _frozen and not force:
+        raise RuntimeError("policy engine is frozen under GLC_HARDEN (B5)")
     from glc.config import policy_yaml_path
 
     eng = get_engine()

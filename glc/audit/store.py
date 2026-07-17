@@ -34,6 +34,27 @@ def _conn():
     Path(p).parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(p, isolation_level=None)  # autocommit; each insert flushes
     c.row_factory = sqlite3.Row
+
+    if os.getenv("GLC_HARDEN", "").strip().lower() in ("1", "true", "yes"):
+
+        def _authorizer(action, arg1, arg2, dbname, source):  # noqa: ANN001, ARG001
+            if action in (
+                sqlite3.SQLITE_DELETE,
+                sqlite3.SQLITE_DROP_TABLE,
+                sqlite3.SQLITE_DROP_VIEW,
+                sqlite3.SQLITE_DROP_INDEX,
+                sqlite3.SQLITE_DROP_TRIGGER,
+                sqlite3.SQLITE_UPDATE,
+                sqlite3.SQLITE_ATTACH,
+                sqlite3.SQLITE_DETACH,
+            ):
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        try:
+            c.set_authorizer(_authorizer)
+        except Exception:
+            pass
     try:
         yield c
     finally:
@@ -96,7 +117,11 @@ class AuditStore:
                     _jsonify(result),
                 ),
             )
-            return int(cur.lastrowid or 0)
+            row_id = int(cur.lastrowid or 0)
+        from glc.security.harden import maybe_commit_volume
+
+        maybe_commit_volume()
+        return row_id
 
 
 _singleton: AuditStore | None = None

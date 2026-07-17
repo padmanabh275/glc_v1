@@ -189,7 +189,13 @@ class PairingStore:
     ) -> PairingRecord:
         """Out-of-band pairing for the installation owner. Used by the
         installer to bootstrap the first owner identity. Not exposed
-        through HTTP."""
+        through HTTP. Gated by GLC_ALLOW_FORCE_PAIR=1 under harden (B3)."""
+        import os
+
+        allow = os.getenv("GLC_ALLOW_FORCE_PAIR", "").strip().lower() in ("1", "true", "yes")
+        harden = os.getenv("GLC_HARDEN", "").strip().lower() in ("1", "true", "yes")
+        if harden and not allow:
+            raise PermissionError("force_pair_owner blocked under GLC_HARDEN (B3); set GLC_ALLOW_FORCE_PAIR=1")
         paired_at = time.time()
         with _conn() as c:
             c.execute(

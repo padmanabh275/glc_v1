@@ -96,6 +96,24 @@ def log_call(
     session=None,
     retries=0,
 ) -> None:
+    # B7 — only gateway route / provider modules may write the cost ledger
+    import sys
+
+    if os.getenv("GLC_HARDEN", "").strip().lower() in ("1", "true", "yes"):
+        frame = sys._getframe(1)  # noqa: SLF001
+        allowed = False
+        while frame:
+            mod = frame.f_globals.get("__name__", "") or ""
+            if mod.startswith(("glc.routes.", "glc.providers", "glc.embedders", "glc.db", "tests.")):
+                allowed = True
+                break
+            if mod.startswith("glc.channels.catalogue"):
+                allowed = False
+                break
+            frame = frame.f_back  # type: ignore[assignment]
+        if not allowed:
+            raise PermissionError("db.log_call blocked for this caller under GLC_HARDEN (B7)")
+
     with conn() as c:
         c.execute(
             """INSERT INTO calls (ts, provider, model, input_tokens, output_tokens,
