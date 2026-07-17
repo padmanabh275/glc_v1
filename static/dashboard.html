@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLC v1 · Gateway Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=3">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">G</span>
+    <h1>GLC <span class="accent">v1</span></h1>
+    <span class="badge" id="port-badge">port —</span>
+    <span class="badge ok" id="health-badge">checking…</span>
+  </div>
+  <nav class="topnav">
+    <a href="/">Dashboard</a>
+    <a href="/help">Help</a>
+    <a href="/docs" target="_blank">OpenAPI</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="sidebar-label">Workspace</p>
+    <button class="nav-btn active" data-panel="channels"><span class="nav-icon channels">◆</span> Channels</button>
+    <button class="nav-btn" data-panel="control"><span class="nav-icon control">◎</span> Control plane</button>
+    <button class="nav-btn" data-panel="llm"><span class="nav-icon llm">◇</span> LLM gateway</button>
+    <button class="nav-btn" data-panel="voice"><span class="nav-icon voice">♪</span> Voice</button>
+  </aside>
+
+  <main class="content">
+    <!-- CHANNELS -->
+    <section id="panel-channels" class="panel active">
+      <div class="panel-head">
+        <h2>Channel adapters</h2>
+        <p class="muted">15 catalogue slots · WS <code>/v1/channels/&lt;name&gt;</code> · typed envelopes</p>
+      </div>
+
+      <div class="stats-row" id="channel-stats">
+        <div class="stat-card stat-blue"><span class="stat-icon">⊞</span><span class="stat-label">Catalogue</span><span class="stat-value" id="stat-total">—</span></div>
+        <div class="stat-card stat-green"><span class="stat-icon">✓</span><span class="stat-label">Enabled</span><span class="stat-value ok-text" id="stat-enabled">—</span></div>
+        <div class="stat-card stat-teal"><span class="stat-icon">⚡</span><span class="stat-label">Live WS</span><span class="stat-value channel-text" id="stat-live">—</span></div>
+        <div class="stat-card stat-purple"><span class="stat-icon">⛓</span><span class="stat-label">Paired</span><span class="stat-value" id="stat-paired">—</span></div>
+      </div>
+
+      <div class="toolbar card toolbar-card">
+        <div class="toolbar-group">
+          <label class="field-label">Install token
+            <input id="token-input" type="password" placeholder="uv run glc token" autocomplete="off">
+          </label>
+          <button id="save-token-btn" class="btn">Save token</button>
+        </div>
+        <div class="toolbar-group">
+          <label class="field-label">Filter
+            <select id="channel-filter">
+              <option value="all">All channels</option>
+              <option value="enabled">Enabled only</option>
+              <option value="disabled">Disabled only</option>
+              <option value="live">Live WS only</option>
+            </select>
+          </label>
+          <button id="refresh-channels-btn" class="btn secondary">Refresh</button>
+        </div>
+        <span class="presence-chip" id="presence-summary">—</span>
+      </div>
+
+      <div id="channel-grid" class="grid channel-grid">loading…</div>
+
+      <h3 class="section-title"><span class="section-dot"></span> Live channel tester</h3>
+      <p class="muted">Send a <code>ChannelMessage</code> over WebSocket. S11 stub agent echoes back <code>[glc echo] …</code>.</p>
+      <ol class="tester-steps muted">
+        <li>Save your install token above</li>
+        <li><strong>Enable</strong> the channel (toggle in grid)</li>
+        <li>Select it in the dropdown and click <strong>Connect</strong></li>
+        <li>Pair your User ID in <strong>Control plane</strong> (or add to <code>allowed_senders</code>)</li>
+        <li>Send — you should get <code>[glc echo] hello from dashboard</code></li>
+      </ol>
+      <div class="card tester">
+        <div class="row-wrap">
+          <label>Channel
+            <select id="ws-channel"></select>
+          </label>
+          <label>User ID
+            <input id="ws-user-id" value="+19999999999">
+          </label>
+          <label>Trust
+            <select id="ws-trust">
+              <option value="owner_paired">owner_paired</option>
+              <option value="user_paired">user_paired</option>
+              <option value="untrusted">untrusted</option>
+            </select>
+          </label>
+          <label>Thread ID <span class="hint">(group id for Signal)</span>
+            <input id="ws-thread-id" placeholder="optional">
+          </label>
+        </div>
+        <label>Message
+          <textarea id="ws-text" rows="2">hello from dashboard</textarea>
+        </label>
+        <div class="btn-row">
+          <button id="ws-connect-btn" class="btn">Connect</button>
+          <button id="ws-send-btn" class="btn" disabled>Send envelope</button>
+          <button id="ws-disconnect-btn" class="btn secondary" disabled>Disconnect</button>
+          <button id="ws-clear-btn" class="btn secondary">Clear</button>
+          <span id="ws-status" class="pill">disconnected</span>
+        </div>
+        <div id="ws-chat-thread" class="msg-thread" aria-live="polite">
+          <p class="msg-empty">Connect and send a message — replies appear here as a chat thread.</p>
+        </div>
+        <details class="raw-log-details">
+          <summary>Raw JSON log</summary>
+          <pre id="ws-log" class="log">—</pre>
+        </details>
+      </div>
+    </section>
+
+    <!-- CONTROL -->
+    <section id="panel-control" class="panel">
+      <div class="panel-head">
+        <h2>Control plane</h2>
+        <p class="muted">Out-of-band pairing, presence, kill switch · Bearer install token required</p>
+      </div>
+
+      <div class="grid two-col">
+        <div class="card">
+          <h3>Presence</h3>
+          <pre id="presence-json" class="log">—</pre>
+          <button id="load-presence-btn" class="btn secondary">Load presence</button>
+        </div>
+        <div class="card">
+          <h3>Pair user</h3>
+          <label>Channel <input id="pair-channel" value="signal"></label>
+          <label>User ID <input id="pair-user-id" value="+19999999999"></label>
+          <label>Handle <input id="pair-handle" value="owner"></label>
+          <label>Trust
+            <select id="pair-trust">
+              <option value="owner_paired">owner_paired</option>
+              <option value="user_paired">user_paired</option>
+            </select>
+          </label>
+          <button id="pair-issue-btn" class="btn">Issue code</button>
+          <label>Confirm code <input id="pair-code" placeholder="6 digits"></label>
+          <button id="pair-confirm-btn" class="btn secondary">Confirm pairing</button>
+          <pre id="pair-out" class="log">—</pre>
+        </div>
+      </div>
+
+      <div class="card danger-zone">
+        <h3>Kill switch</h3>
+        <p class="muted">Sends SIGTERM to gateway. Loopback only unless <code>GLC_KILL_ALLOW_REMOTE=1</code>.</p>
+        <button id="kill-btn" class="btn danger">POST /v1/control/kill</button>
+        <pre id="kill-out" class="log">—</pre>
+      </div>
+    </section>
+
+    <!-- LLM -->
+    <section id="panel-llm" class="panel">
+      <div class="panel-head">
+        <h2>LLM gateway (V9-compatible)</h2>
+        <p class="muted">Providers, routers, embedders — unchanged from V9 surface on port 8111</p>
+      </div>
+
+      <h3 class="section-title">Failover order</h3>
+      <div id="order" class="order-list">loading…</div>
+
+      <h3 class="section-title">Worker pool</h3>
+      <div id="providers" class="grid"></div>
+
+      <h3 class="section-title">Router pool</h3>
+      <div id="router-order" class="order-list muted">loading…</div>
+      <div id="routers" class="grid"></div>
+
+      <h3 class="section-title">Quick chat test</h3>
+      <div class="test-area">
+        <select id="test-prov"><option value="">auto (failover)</option></select>
+        <textarea id="test-prompt" placeholder="prompt…">Say hello in one short line.</textarea>
+        <button id="run-test-btn" class="btn">Send</button>
+      </div>
+      <pre id="test-out" class="log">—</pre>
+
+      <h3 class="section-title">Recent calls</h3>
+      <div class="table-wrap">
+        <table id="calls-table">
+          <thead>
+            <tr><th>Time</th><th>Provider</th><th>Model</th><th>Status</th><th>Latency</th><th>Error</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- VOICE -->
+    <section id="panel-voice" class="panel">
+      <div class="panel-head">
+        <h2>Voice layer</h2>
+        <p class="muted"><code>POST /v1/transcribe</code> · <code>POST /v1/speak</code></p>
+      </div>
+      <div class="grid two-col">
+        <div class="card">
+          <h3>Speak (TTS)</h3>
+          <label>Text <textarea id="speak-text" rows="3">Hello from GLC.</textarea></label>
+          <label>Prefer
+            <select id="speak-prefer">
+              <option value="fallback">fallback (system)</option>
+              <option value="kokoro">kokoro</option>
+              <option value="elevenlabs">elevenlabs</option>
+              <option value="cartesia">cartesia</option>
+              <option value="gemini_live">gemini_live</option>
+            </select>
+          </label>
+          <button id="speak-btn" class="btn">Synthesize</button>
+          <pre id="speak-out" class="log">—</pre>
+        </div>
+        <div class="card">
+          <h3>Transcribe (STT)</h3>
+          <p class="muted">Upload a short audio file (wav/mp3). Requires provider keys or local models.</p>
+          <input id="transcribe-file" type="file" accept="audio/*">
+          <label>Prefer
+            <select id="transcribe-prefer">
+              <option value="groq_whisper">groq_whisper</option>
+              <option value="whisper_cpp">whisper_cpp</option>
+              <option value="gemini_live">gemini_live</option>
+            </select>
+          </label>
+          <button id="transcribe-btn" class="btn">Transcribe</button>
+          <pre id="transcribe-out" class="log">—</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/app.js?v=5"></script>
+</body>
+</html>

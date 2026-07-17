@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GLC v1 · Help</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  main.help { max-width: 900px; padding: 28px 24px; }
+  main.help h2 { margin-top: 32px; font-size: 18px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  main.help h3 { margin-top: 20px; color: var(--blue); font-size: 15px; }
+  main.help ul { padding-left: 20px; }
+  main.help li { margin: 6px 0; }
+  main.help a { color: var(--blue); }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">◈</span><h1>GLC <span class="accent">v1</span> · Help</h1></div>
+  <nav class="topnav"><a href="/">Dashboard</a><a href="/help">Help</a><a href="/docs">OpenAPI</a></nav>
+</header>
+<main class="help">
+  <p><strong>GLC v1</strong> is the Session 11 gateway: V9 LLM routes plus channels, voice, and an out-of-band control plane. Default port <strong>8111</strong>.</p>
+
+  <h2>Quick start</h2>
+  <pre><code>cd glc_v1
+uv sync --link-mode=copy   # OneDrive users
+uv run glc serve
+uv run glc token           # paste into dashboard → Save token</code></pre>
+
+  <h2>Channel layer (new in S11)</h2>
+  <ul>
+    <li><code>WS /v1/channels/&lt;name&gt;</code> — adapter control plane (Bearer token or <code>?token=</code>)</li>
+    <li>Envelopes: <code>ChannelMessage</code> in, <code>ChannelReply</code> out</li>
+    <li>15 catalogue slots: telegram, discord, slack, signal, …</li>
+    <li>Trust levels: <code>owner_paired</code>, <code>user_paired</code>, <code>untrusted</code></li>
+  </ul>
+
+  <h2>Control plane</h2>
+  <ul>
+    <li><code>POST /v1/control/pair</code> — issue 6-digit pairing code</li>
+    <li><code>POST /v1/control/pair/confirm</code> — confirm pairing</li>
+    <li><code>GET /v1/control/presence</code> — live channels + paired users</li>
+    <li><code>POST /v1/control/kill</code> — loopback kill switch</li>
+  </ul>
+
+  <h2>Voice</h2>
+  <ul>
+    <li><code>POST /v1/transcribe?prefer=…</code> — STT (groq_whisper, whisper_cpp, gemini_live)</li>
+    <li><code>POST /v1/speak?prefer=…</code> — TTS (kokoro, elevenlabs, cartesia, gemini_live, fallback)</li>
+  </ul>
+
+  <h2>V9-compatible LLM routes</h2>
+  <p>Point existing S9/S10 clients at <code>http://localhost:8111</code>:</p>
+  <pre><code>export LLM_GATEWAY_V9_URL=http://localhost:8111</code></pre>
+  <p>Routes: <code>/v1/chat</code>, <code>/v1/vision</code>, <code>/v1/embed</code>, <code>/v1/status</code>, <code>/v1/providers</code>, …</p>
+
+  <h2>Dashboard tips</h2>
+  <ul>
+    <li><strong>Channels tab</strong> — view catalogue, test WebSocket echo, default channel <code>signal</code></li>
+    <li><strong>Control tab</strong> — pair owner before testing allowlists</li>
+    <li><strong>Group vs DM (Signal)</strong> — set <code>thread_id</code> to group id for group replies</li>
+  </ul>
+
+  <h2>Local testing scripts</h2>
+  <pre><code>uv run pytest tests/channels/test_signal.py -v
+uv run python local_testing/level2_manual_adapter_test.py
+uv run python local_testing/level3_gateway_echo_test.py</code></pre>
+</main>
+</body>
+</html>

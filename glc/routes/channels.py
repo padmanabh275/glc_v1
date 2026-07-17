@@ -1,15 +1,12 @@
 """WS /v1/channels/{name} — adapter control plane.
 
 Adapters connect over WebSocket and exchange JSON-serialised
-ChannelMessage and ChannelReply envelopes. The connection is gated by
-the installation token presented in the Authorization header (Sec-Websocket
-clients can pass it as a query string fallback, ?token=...).
+ChannelMessage and ChannelReply envelopes. Auth uses Authorization:
+Bearer <install_token> or a short-lived ticket from /v1/control/ws-ticket
+(passed as Sec-WebSocket-Protocol: glc.ticket.<ticket> for browsers).
+Durable ?token= query auth is rejected (C3).
 
-This endpoint is the contract surface adapters speak to. The gateway
-processes incoming messages through the rate limiter, allowlist,
-trust-level classifier, policy engine, and (eventually) the agent
-runtime. For S11 the agent runtime is a stub that echoes the message
-back so adapter authors can verify their wire is plumbed correctly.
+Inbound envelopes must have env.channel == path {name} (C2).
 """
 
 from __future__ import annotations
@@ -18,34 +15,117 @@ import hmac
 import json
 import os
 
-from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel
 
 from glc.audit import append as audit_append
 from glc.channels import registry
 from glc.channels.envelope import ChannelMessage, ChannelReply
-from glc.config import get_or_create_install_token
+from glc.channels.registry import discover
+from glc.config import get_or_create_install_token, load_channels, save_channels
 from glc.security.allowlists import allowed
+from glc.security.auth import require_install_token
+from glc.security.deps import require_data_plane
+from glc.security.harden import maybe_commit_volume
 from glc.security.pairing import get_pairing_store
 from glc.security.rate_limits import get_rate_limiter
+from glc.security.ws_tickets import consume_ticket
 
 router = APIRouter()
 
 
+class ChannelEnabledRequest(BaseModel):
+    enabled: bool
+
+
+def _ws_presented_token(websocket: WebSocket, token: str | None) -> str | None:
+    header_auth = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
+    if header_auth and header_auth.startswith("Bearer "):
+        return header_auth.removeprefix("Bearer ").strip()
+    # Browser-friendly: Sec-WebSocket-Protocol: glc.bearer.<token> or glc.ticket.<ticket>
+    proto = websocket.headers.get("sec-websocket-protocol") or ""
+    for part in proto.split(","):
+        part = part.strip()
+        if part.startswith("glc.bearer."):
+            return part.removeprefix("glc.bearer.")
+        if part.startswith("glc.ticket."):
+            return part.removeprefix("glc.ticket.")
+    # C3: durable ?token= is no longer accepted
+    if token:
+        return None
+    return None
+
+
+def _ws_auth_ok(presented: str | None) -> bool:
+    if not presented:
+        return False
+    expected = get_or_create_install_token()
+    if presented == expected:
+        return True
+    return consume_ticket(presented)
+
+
+@router.get("/v1/channels/catalogue")
+async def channels_catalogue(_: str = Depends(require_data_plane)):
+    """Read-only list of discovered channel adapters for the dashboard."""
+    cfg = load_channels().get("channels") or {}
+    adapters = discover()
+    return {
+        "channels": [
+            {
+                "name": name,
+                "enabled": bool((cfg.get(name) or {}).get("enabled", True)),
+                "adapter": f"{cls.__module__}.{cls.__name__}",
+            }
+            for name, cls in sorted(adapters.items())
+        ]
+    }
+
+
+@router.patch("/v1/channels/{name}/enabled")
+async def set_channel_enabled(
+    name: str,
+    req: ChannelEnabledRequest,
+    authorization: str | None = Header(default=None),
+):
+    """Toggle a channel adapter on/off in ~/.glc/channels.yaml."""
+    require_install_token(authorization)
+    if name not in discover():
+        raise HTTPException(404, f"unknown channel {name!r}")
+    cfg = load_channels()
+    channels = cfg.setdefault("channels", {})
+    entry = channels.setdefault(name, {})
+    entry["enabled"] = req.enabled
+    save_channels(cfg)
+    maybe_commit_volume()
+    return {"name": name, "enabled": req.enabled}
+
+
 @router.websocket("/v1/channels/{name}")
 async def channel_ws(websocket: WebSocket, name: str, token: str | None = Query(default=None)):
-    header_auth = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
-    presented = None
-    if header_auth and header_auth.startswith("Bearer "):
-        presented = header_auth.removeprefix("Bearer ").strip()
-    elif token:
-        presented = token
-    expected = get_or_create_install_token()
-    if presented != expected:
+    presented = _ws_presented_token(websocket, token)
+    if not _ws_auth_ok(presented):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    await websocket.accept()
+    # Echo chosen subprotocol if client offered one
+    proto = websocket.headers.get("sec-websocket-protocol")
+    if proto:
+        chosen = proto.split(",")[0].strip()
+        await websocket.accept(subprotocol=chosen)
+    else:
+        await websocket.accept()
     state = websocket.app.state
     registered = list(getattr(state, "registered_channels", []))
     if name not in registered:
@@ -64,6 +144,13 @@ async def channel_ws(websocket: WebSocket, name: str, token: str | None = Query(
                 env = ChannelMessage.model_validate(payload)
             except Exception as e:
                 await websocket.send_text(json.dumps({"error": f"invalid envelope: {e}"}))
+                continue
+
+            # C2 — reject cross-channel spoofing
+            if env.channel != name:
+                await websocket.send_text(
+                    json.dumps({"error": f"channel mismatch: envelope {env.channel!r} != path {name!r}"})
+                )
                 continue
 
             ok, why = allowed(
@@ -104,9 +191,6 @@ async def channel_ws(websocket: WebSocket, name: str, token: str | None = Query(
                 params={"text": env.text, "thread_id": env.thread_id},
             )
 
-            # S11 stub agent: echo the text back so adapter authors can
-            # verify the wire end-to-end. The real agent runtime hooks
-            # in here in subsequent sessions.
             reply = ChannelReply(
                 channel=env.channel,
                 channel_user_id=env.channel_user_id,
@@ -144,6 +228,9 @@ async def channel_webhook(name: str, request: Request):
     msg = await adapter.on_message(raw)
     if msg is None:
         return {"status": "ok"}
+
+    if msg.channel != name:
+        raise HTTPException(400, f"channel mismatch: envelope {msg.channel!r} != path {name!r}")
 
     limiter = get_rate_limiter()
     pairings = get_pairing_store()
