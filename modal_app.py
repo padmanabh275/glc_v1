@@ -35,15 +35,21 @@ image = (
     .env(
         {
             "GLC_CONFIG_DIR": "/data/glc",
+            "GLC_AUDIT_DB": "/data/glc/audit.sqlite",
+            "GLC_GATEWAY_DB": "/data/glc/gateway.sqlite",
+            "GLC_PAIRING_DB": "/data/glc/pairings.sqlite",
             "GLC_HARDEN": "1",
             "GLC_DISABLE_DOCS": "1",
             "GLC_LLM_EGRESS": "modal",
-            "PYTHONPATH": "/root",
+            # uv sync installs into /root/.venv; Modal's runtime must see it.
+            "VIRTUAL_ENV": "/root/.venv",
+            "PATH": "/root/.venv/bin:/usr/local/bin:/usr/bin:/bin",
+            "PYTHONPATH": "/root:/root/.venv/lib/python3.11/site-packages",
         }
     )
-    .add_local_file(str(LOCAL_PYPROJECT), remote_path="/root/pyproject.toml")
-    .add_local_file(str(LOCAL_LOCK), remote_path="/root/uv.lock")
-    .add_local_dir(str(LOCAL_GLC), remote_path="/root/glc")
+    .add_local_file(str(LOCAL_PYPROJECT), remote_path="/root/pyproject.toml", copy=True)
+    .add_local_file(str(LOCAL_LOCK), remote_path="/root/uv.lock", copy=True)
+    .add_local_dir(str(LOCAL_GLC), remote_path="/root/glc", copy=True)
     .run_commands(
         "cd /root && uv sync --frozen --no-dev --link-mode=copy",
     )

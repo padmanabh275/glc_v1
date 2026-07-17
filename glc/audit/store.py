@@ -38,16 +38,20 @@ def _conn():
     if os.getenv("GLC_HARDEN", "").strip().lower() in ("1", "true", "yes"):
 
         def _authorizer(action, arg1, arg2, dbname, source):  # noqa: ANN001, ARG001
+            # Deny destructive ops. Do NOT blanket-deny SQLITE_UPDATE: fresh
+            # CREATE TABLE … AUTOINCREMENT must write sqlite_sequence (B2 still
+            # blocks UPDATE/DELETE on audit_log itself).
             if action in (
                 sqlite3.SQLITE_DELETE,
                 sqlite3.SQLITE_DROP_TABLE,
                 sqlite3.SQLITE_DROP_VIEW,
                 sqlite3.SQLITE_DROP_INDEX,
                 sqlite3.SQLITE_DROP_TRIGGER,
-                sqlite3.SQLITE_UPDATE,
                 sqlite3.SQLITE_ATTACH,
                 sqlite3.SQLITE_DETACH,
             ):
+                return sqlite3.SQLITE_DENY
+            if action == sqlite3.SQLITE_UPDATE and (arg1 or "") == "audit_log":
                 return sqlite3.SQLITE_DENY
             return sqlite3.SQLITE_OK
 
