@@ -5,12 +5,13 @@ from __future__ import annotations
 import base64
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from glc.security.deps import require_data_plane
 from glc.voice.stt import STTError, transcribe
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_data_plane)])
 
 
 class TranscribeRequest(BaseModel):
@@ -39,7 +40,7 @@ async def transcribe_route(req: TranscribeRequest):
     except STTError as e:
         if req.prefer == "streaming":
             raise HTTPException(400, str(e)) from e
-        raise HTTPException(e.status or 502, str(e)) from e
+        raise HTTPException(e.status or 502, "upstream_error") from e
     return TranscribeResponse(
         text=r.text,
         language=r.language,

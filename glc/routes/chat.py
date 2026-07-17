@@ -18,12 +18,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from jsonschema import Draft202012Validator, ValidationError
 
 from glc import db
 from glc import providers as P
+from glc.security.deps import require_data_plane
 from glc.llm_schemas import (
     BatchChatRequest,
     ChatRequest,
@@ -69,7 +70,7 @@ ROUTER_PROMPT = (
     "Output the single word and nothing else."
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_data_plane)])
 
 
 # ─────────────────────────── helpers (verbatim port) ──────────────────────────
@@ -286,24 +287,15 @@ def _required_caps(req: ChatRequest):
 
 
 async def _resolve_image_urls(messages):
-    import base64
-
-    import httpx as _httpx
+    from glc.security.url_fetch import UrlFetchError, fetch_image_as_data_url
 
     async def _fetch_to_data_url(url: str) -> str:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; GLCv1/0.1; +image-resolver)",
-            "Accept": "image/*,*/*;q=0.8",
-        }
-        async with _httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as c:
-            try:
-                r = await c.get(url)
-                r.raise_for_status()
-            except _httpx.HTTPError as e:
-                raise HTTPException(400, f"failed to fetch image url {url!r}: {e}")
-            mt = (r.headers.get("content-type") or "image/png").split(";")[0].strip()
-            b64 = base64.b64encode(r.content).decode()
-            return f"data:{mt};base64,{b64}"
+        try:
+            return await fetch_image_as_data_url(url)
+        except UrlFetchError as e:
+            raise HTTPException(400, f"image url rejected: {e}") from e
+        except Exception as e:
+            raise HTTPException(400, f"failed to fetch image url: {e}") from e
 
     out = []
     for m in messages:
@@ -600,12 +592,13 @@ async def chat(req: ChatRequest, request: Request):
                 session=req.session,
                 retries=retries,
             )
-            tag = f"failed: {str(e)[:100]}"
+            tag = f"failed: {type(e).__name__}"
             if secs > 0:
                 tag += f" → backoff {secs:.0f}s ({reason})"
             all_attempts.append({"provider": name, "reason": tag})
+            print(f"[glc.chat] provider {name} error: {e!r}")
             if explicit_override or not getattr(e, "retryable", True):
-                raise HTTPException(502, f"{name} failed: {e}")
+                raise HTTPException(502, "upstream_error")
             candidates = [c for c in candidates if c != name]
             continue
         except HTTPException:
@@ -628,13 +621,14 @@ async def chat(req: ChatRequest, request: Request):
                 session=req.session,
                 retries=retries,
             )
-            all_attempts.append({"provider": name, "reason": f"exception: {str(e)[:120]}"})
+            print(f"[glc.chat] provider {name} exception: {e!r}")
+            all_attempts.append({"provider": name, "reason": f"exception: {type(e).__name__}"})
             if explicit_override:
-                raise HTTPException(502, f"{name} failed: {e}")
+                raise HTTPException(502, "upstream_error")
             candidates = [c for c in candidates if c != name]
             continue
 
-    raise HTTPException(503, f"all providers unavailable. attempts: {all_attempts}. last_error: {last_err}")
+    raise HTTPException(503, "all providers unavailable")
 
 
 @router.post("/v1/chat/batch")

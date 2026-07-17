@@ -13,9 +13,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).parent
+STATIC = ROOT.parent / "static"
 load_dotenv(ROOT.parent / ".env")  # repo .env, if present
 
 from glc import db  # noqa: E402
@@ -31,8 +33,13 @@ from glc.routes import control as control_route  # noqa: E402
 from glc.routes import speak as speak_route  # noqa: E402
 from glc.routes import transcribe as transcribe_route  # noqa: E402
 from glc.routing import Router, RouterPool  # noqa: E402
+from glc.security.harden import apply_process_hardening, harden_enabled  # noqa: E402
 
 PORT = int(os.getenv("GLC_PORT", "8111"))
+
+
+def _docs_disabled() -> bool:
+    return os.getenv("GLC_DISABLE_DOCS", "").strip().lower() in ("1", "true", "yes") or harden_enabled()
 
 
 def _install_sighup_reload() -> None:
@@ -43,7 +50,7 @@ def _install_sighup_reload() -> None:
 
     def _handler(signum, frame):  # noqa: ARG001
         try:
-            reload_engine()
+            reload_engine(force=True)
             print("[glc] policy.yaml reloaded via SIGHUP")
         except Exception as e:
             print(f"[glc] SIGHUP reload failed: {e!r}")
@@ -58,10 +65,16 @@ def _install_sighup_reload() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    apply_process_hardening()
     db.init()
     init_audit()
     get_or_create_install_token()
     _install_sighup_reload()
+    from glc.policy.engine import freeze_engine, get_engine
+
+    get_engine()
+    if harden_enabled():
+        freeze_engine()
     app.state.cache = GeminiCache(ttl_seconds=300)
     app.state.providers = P.build_providers(app.state.cache)
     app.state.router = Router(app.state.providers, chat_route.ORDER)
@@ -73,7 +86,19 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="GLC v1 — Gateway for LLMs and Channels", lifespan=lifespan)
+_docs = None if _docs_disabled() else "/docs"
+_openapi = None if _docs_disabled() else "/openapi.json"
+
+app = FastAPI(
+    title="GLC v1 — Gateway for LLMs and Channels",
+    lifespan=lifespan,
+    docs_url=_docs,
+    redoc_url=None if _docs_disabled() else "/redoc",
+    openapi_url=_openapi,
+)
+
+if STATIC.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 app.include_router(chat_route.router)
 app.include_router(transcribe_route.router)
@@ -82,19 +107,26 @@ app.include_router(control_route.router)
 app.include_router(channels_route.router)
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index() -> str:
-    return (
+@app.get("/", response_class=HTMLResponse, response_model=None)
+async def index():
+    dashboard = STATIC / "dashboard.html"
+    if dashboard.is_file():
+        return FileResponse(dashboard)
+    return HTMLResponse(
         "<html><body style='font-family:sans-serif;max-width:680px;margin:2em auto'>"
         "<h1>GLC v1</h1>"
         "<p>Gateway for LLMs and Channels — Session 11 scaffold.</p>"
         "<p>Open <code>/docs</code> for the OpenAPI explorer.</p>"
-        "<p>Channel adapters connect over <code>WS /v1/channels/&lt;name&gt;</code>."
-        " V9 callers should point at this port unchanged: chat, vision, embed,"
-        " batch, cost-by-agent, providers, capabilities, status, calls."
-        "</p>"
         "</body></html>"
     )
+
+
+@app.get("/help", response_class=HTMLResponse, response_model=None)
+async def help_page():
+    help_html = STATIC / "help.html"
+    if help_html.is_file():
+        return FileResponse(help_html)
+    return HTMLResponse("<html><body><p>Help page not found.</p></body></html>")
 
 
 @app.get("/healthz")

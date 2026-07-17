@@ -18,6 +18,10 @@ def _isolated_glc_state(monkeypatch, tmp_path):
     monkeypatch.setenv("GLC_AUDIT_DB", str(tmp_path / "audit.sqlite"))
     monkeypatch.setenv("GLC_PAIRING_DB", str(tmp_path / "pairings.sqlite"))
     monkeypatch.setenv("GLC_GATEWAY_DB", str(tmp_path / "gateway.sqlite"))
+    # Tests need force_pair_owner; keep harden off for suite unless a test enables it.
+    monkeypatch.setenv("GLC_ALLOW_FORCE_PAIR", "1")
+    monkeypatch.delenv("GLC_HARDEN", raising=False)
+    monkeypatch.delenv("GLC_DISABLE_DOCS", raising=False)
 
     # Reset singletons that cache config-dir at first access.
     import glc.config as _cfg
@@ -29,12 +33,19 @@ def _isolated_glc_state(monkeypatch, tmp_path):
     import glc.security.rate_limits as _r
 
     _r._limiter = None
+    import glc.security.data_plane_limits as _d
+
+    _d._limiter = None
     import glc.policy.engine as _e
 
     _e._engine = None
+    _e._frozen = False
     import glc.audit.store as _a
 
     _a._singleton = None
+    import glc.security.harden as _h
+
+    _h._APPLIED = False
     yield
 
 
@@ -55,3 +66,8 @@ def install_token(app_client):
     from glc.config import install_token_path
 
     return install_token_path().read_text().strip()
+
+
+@pytest.fixture
+def auth_headers(install_token):
+    return {"Authorization": f"Bearer {install_token}"}
