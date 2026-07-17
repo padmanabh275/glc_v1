@@ -37,6 +37,14 @@ def load_channels() -> dict:
     return yaml.safe_load(p.read_text()) or {"channels": {}}
 
 
+def save_channels(cfg: dict) -> Path:
+    """Persist channel config to the user config dir (~/.glc/channels.yaml)."""
+    p = CONFIG_DIR / "channels.yaml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml.safe_dump(cfg, default_flow_style=False, sort_keys=False))
+    return p
+
+
 def install_token_path() -> Path:
     return CONFIG_DIR / "install_token"
 
