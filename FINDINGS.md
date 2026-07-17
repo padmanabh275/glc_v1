@@ -39,7 +39,7 @@ two-file `gateway.py` + adapter harness — same leak surface, against this code
 | `13bc1c3` | C1/C2/C3/C6 — inv 1, 4, 8 |
 | `184c126` | B2–B8 — inv 2, 3, 4, 6, 7 |
 | `690b3fc` | A3/A4/A5/A6 — inv 7 + Modal env |
-| *(this)* | Modal deploy fixes + B2 authorizer bootstrap + verified repro notes |
+| `f91b1a5` | Modal deploy fixes + B2 authorizer bootstrap + verified repro notes |
 
 ## Reproduce (post-fix — attacks must fail)
 
